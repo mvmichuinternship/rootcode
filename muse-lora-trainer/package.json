@@ -1,0 +1,21 @@
+{
+  "name": "muse-lora-trainer",
+  "version": "0.0.1",
+  "description": "LoRA fine-tuning client for FireworksAI and Baseten (no VSCode dependencies)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc"
+  },
+  "dependencies": {
+    "form-data": "^4.0.0",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/node-fetch": "^2.6.11",
+    "typescript": "^5.4.0"
+  }
+}
