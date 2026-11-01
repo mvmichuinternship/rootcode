@@ -35,7 +35,10 @@ async function main() {
 		sourcesContent: false,
 		platform: 'node',
 		outfile: 'dist/extension.js',
-		external: ['vscode'],
+		// Optional ADK peers loaded lazily (GCS, SQL sessions, Cloud telemetry); unused here.
+		external: ['vscode', '@google-cloud/storage', '@google-cloud/secret-manager', '@google-cloud/opentelemetry-*', '@mikro-orm/*'],
+		// ADK's ESM build uses import.meta.url, which breaks in a CJS bundle.
+		alias: { '@google/adk': './node_modules/@google/adk/dist/cjs/index.js' },
 		logLevel: 'silent',
 		plugins: [
 			/* add to the end of plugins array */

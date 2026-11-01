@@ -3,9 +3,9 @@
   "publisher": "rootcode",
   "displayName": "Rootcode",
   "description": "Rootcode builds a living dependency graph of your codebase, trains a personalized agent on your internal patterns, conventions, and engineering history, and delivers code suggestions that don’t just work — they fit. No more generically correct code that violates your architecture. The longer your team uses it, the smarter it gets.",
-  "version": "0.0.3",
+  "version": "0.0.7",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.90.0"
   },
   "categories": [
     "Other"
@@ -13,6 +13,15 @@
   "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
+    "chatParticipants": [
+      {
+        "id": "rootcode.agent",
+        "name": "rootcode",
+        "fullName": "Rootcode",
+        "description": "Develop, test, commit and review code with Rootcode's agents",
+        "isSticky": true
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -39,6 +48,14 @@
         "icon": "$(circuit-board)"
       },
       {
+        "command": "rootcode.agent.openChat",
+        "title": "Rootcode: Open Agent Chat"
+      },
+      {
+        "command": "rootcode.agent.setGithubToken",
+        "title": "Rootcode: Set GitHub Token"
+      },
+      {
         "command": "loraTrainer.startTraining",
         "title": "LoRA: Start Fine-Tuning Job"
       },
@@ -60,47 +77,95 @@
         }
       ]
     },
-    "configuration": {
-      "title": "LoRA Trainer",
-      "properties": {
-        "loraTrainer.provider": {
-          "type": "string",
-          "enum": [
-            "fireworks",
-            "baseten"
-          ],
-          "default": "baseten",
-          "description": "Training provider"
-        },
-        "loraTrainer.fireworksApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "FireworksAI API key (falls back to FIREWORKS_API_KEY env var)"
-        },
-        "loraTrainer.basetenApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Baseten API key (falls back to BASETEN_API_KEY env var)"
-        },
-        "loraTrainer.baseModel": {
-          "type": "string",
-          "default": "",
-          "description": "Base model to fine-tune. Empty = meta-models/muse-spark-open-1026 on Baseten, accounts/fireworks/models/llama-v3p1-8b-instruct on Fireworks"
-        },
-        "loraTrainer.loraRank": {
-          "type": "number",
-          "default": 16
-        },
-        "loraTrainer.learningRate": {
-          "type": "number",
-          "default": 0.0002
-        },
-        "loraTrainer.epochs": {
-          "type": "number",
-          "default": 3
+    "configuration": [
+      {
+        "title": "Rootcode Agent",
+        "properties": {
+          "rootcode.agent.modelSource": {
+            "type": "string",
+            "enum": [
+              "baseten-model-api",
+              "trained-endpoint"
+            ],
+            "default": "baseten-model-api",
+            "description": "baseten-model-api: Baseten's hosted Model APIs (inference.baseten.co). trained-endpoint: the LoRA deployment saved by the trainer in .repo2lora/rootcode-endpoint.json."
+          },
+          "rootcode.agent.baseUrl": {
+            "type": "string",
+            "default": "",
+            "description": "Override the OpenAI-compatible base URL (default https://inference.baseten.co/v1). Uses the same Baseten API key as training."
+          },
+          "rootcode.agent.model": {
+            "type": "string",
+            "default": "",
+            "description": "Override the model slug (default meta-models/muse-spark-open-1026, the hackathon model)."
+          },
+          "rootcode.agent.reasoningEffort": {
+            "type": "string",
+            "enum": [
+              "",
+              "low",
+              "medium",
+              "high",
+              "xhigh"
+            ],
+            "default": "medium",
+            "description": "Reasoning effort for Muse Spark Open (it always reasons; Baseten's default is xhigh, which is slow for agents). Empty = Baseten default."
+          },
+          "rootcode.agent.maxTokens": {
+            "type": "number",
+            "default": 8192,
+            "description": "max_tokens per model call, including reasoning tokens."
+          },
+          "rootcode.agent.sandboxImage": {
+            "type": "string",
+            "default": "node:22-slim",
+            "description": "Docker image the QA agent uses for sandboxed test runs"
+          }
+        }
+      },
+      {
+        "title": "LoRA Trainer",
+        "properties": {
+          "loraTrainer.provider": {
+            "type": "string",
+            "enum": [
+              "fireworks",
+              "baseten"
+            ],
+            "default": "baseten",
+            "description": "Training provider"
+          },
+          "loraTrainer.fireworksApiKey": {
+            "type": "string",
+            "default": "",
+            "description": "FireworksAI API key (falls back to FIREWORKS_API_KEY env var)"
+          },
+          "loraTrainer.basetenApiKey": {
+            "type": "string",
+            "default": "",
+            "description": "Baseten API key (falls back to BASETEN_API_KEY env var)"
+          },
+          "loraTrainer.baseModel": {
+            "type": "string",
+            "default": "",
+            "description": "Base model to fine-tune. Empty = meta-models/muse-spark-open-1026 on Baseten, accounts/fireworks/models/llama-v3p1-8b-instruct on Fireworks"
+          },
+          "loraTrainer.loraRank": {
+            "type": "number",
+            "default": 16
+          },
+          "loraTrainer.learningRate": {
+            "type": "number",
+            "default": 0.0002
+          },
+          "loraTrainer.epochs": {
+            "type": "number",
+            "default": 3
+          }
         }
       }
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -110,8 +175,8 @@
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && npm run lint && node esbuild.js --production",
     "package:vsix": "npm exec --yes --package @vscode/vsce -- vsce package --allow-missing-repository --skip-license",
-    "compile-tests": "tsc -p . --outDir out",
-    "watch-tests": "tsc -p . -w --outDir out",
+    "compile-tests": "tsc -p tsconfig.test.json",
+    "watch-tests": "tsc -p tsconfig.test.json -w",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "check-types": "tsc --noEmit",
     "test:workflow": "npm run compile-tests && mocha --ui tdd out/test/workflow.test.js",
@@ -121,7 +186,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
-    "@types/vscode": "1.85.0",
+    "@types/vscode": "1.90.0",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.0.0",
     "esbuild": "^0.28.1",
@@ -135,7 +200,10 @@
     "serialize-javascript": "^7.0.6"
   },
   "dependencies": {
+    "@google/adk": "^2.4.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@vscode/codicons": "^0.0.46-24",
-    "muse-lora-trainer": "file:../muse-lora-trainer"
+    "muse-lora-trainer": "file:../muse-lora-trainer",
+    "zod": "^4.6.7"
   }
 }
