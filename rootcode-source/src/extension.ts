@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { TrainerPanel, checkJobStatus } from './providers/TrainerPanel';
 import { WorkflowRunner, type WorkflowKind } from './workflow';
 import { registerAgent, createAgentHost, type AgentHost } from './agents/register';
+import { createMemorySystem, registerMemoryUi, type MemorySystem } from './memory';
 
 function getWebviewContent(webview: vscode.Webview, context: vscode.ExtensionContext, nonce: string): string {
 	const resource = (...segments: string[]) => webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, ...segments)).toString();
@@ -40,10 +41,18 @@ function handleAgentMessage(message: unknown, host: AgentHost, post: (event: unk
 	return true;
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
 	let panel: vscode.WebviewPanel | undefined;
 	let runner: WorkflowRunner | undefined;
-	const agentHost = createAgentHost(context);
+	// Cross-session memory is a best-effort feedback loop: if it fails to start, the agents run without it.
+	let memory: MemorySystem | undefined;
+	try {
+		memory = createMemorySystem(context);
+		await memory.store.initialize();
+		context.subscriptions.push(memory.store, memory.tracker);
+		registerMemoryUi(context, memory);
+	} catch { memory = undefined; }
+	const agentHost = createAgentHost(context, memory);
 	registerAgent(context, agentHost);
 	// Register the webview view provider for the sidebar
 	const viewProvider = new (class implements vscode.WebviewViewProvider {

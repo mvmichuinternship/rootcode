@@ -3,7 +3,7 @@
   "publisher": "rootcode",
   "displayName": "Rootcode",
   "description": "Rootcode builds a living dependency graph of your codebase, trains a personalized agent on your internal patterns, conventions, and engineering history, and delivers code suggestions that don’t just work — they fit. No more generically correct code that violates your architecture. The longer your team uses it, the smarter it gets.",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -54,6 +54,18 @@
       {
         "command": "rootcode.agent.setGithubToken",
         "title": "Rootcode: Set GitHub Token"
+      },
+      {
+        "command": "rootcode.memory.show",
+        "title": "Rootcode: Show Agent Memory (Recall)"
+      },
+      {
+        "command": "rootcode.memory.openFile",
+        "title": "Rootcode: Open Agent Memory File"
+      },
+      {
+        "command": "rootcode.memory.clear",
+        "title": "Rootcode: Clear Agent Memory"
       },
       {
         "command": "loraTrainer.startTraining",
@@ -121,6 +133,17 @@
             "type": "string",
             "default": "node:22-slim",
             "description": "Docker image the QA agent uses for sandboxed test runs"
+          },
+          "rootcode.memory.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Let Rootcode Recall learn from how you use agent responses (edits, errors, tests, git reverts) and apply those lessons in future sessions for this project."
+          },
+          "rootcode.memoryTrackingWindowMs": {
+            "type": "number",
+            "default": 300000,
+            "minimum": 1000,
+            "description": "How long (ms) Rootcode watches your edits after an agent response to learn whether it helped."
           }
         }
       },

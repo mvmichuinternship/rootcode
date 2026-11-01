@@ -6,6 +6,7 @@ import { AgentService } from './AgentService';
 import { DEFAULT_MODEL, type AgentConfig } from './config';
 import { MAIN_SLOT, readEnv, resolveGithub, resolveModel, resolvePrReviewModel, type ResolvedModel } from './env';
 import { resolveSettings } from '../providers/TrainerPanel';
+import type { MemorySystem } from '../memory';
 
 const GITHUB_KEY = 'rootcode.githubToken';
 const PARTICIPANT_ID = 'rootcode.agent';
@@ -43,7 +44,7 @@ export interface AgentHost {
 	reset(): Promise<void>;
 }
 
-export function createAgentHost(context: vscode.ExtensionContext): AgentHost {
+export function createAgentHost(context: vscode.ExtensionContext, memory?: MemorySystem): AgentHost {
 	let service: AgentService | undefined;
 	let structureKey = '';
 	const approve = async (description: string) => {
@@ -70,7 +71,7 @@ export function createAgentHost(context: vscode.ExtensionContext): AgentHost {
 					workspaceRoot: root,
 					github,
 				};
-				service = new AgentService(cfg, approve);
+				service = new AgentService(cfg, approve, memory);
 				structureKey = key;
 			}
 			return { service };
@@ -120,6 +121,8 @@ export function registerAgent(context: vscode.ExtensionContext, host: AgentHost)
 				} else if (e.type === 'text' && !e.partial) {
 					if (e.author !== lastAuthor) { stream.markdown(`\n\n**${e.author}**\n\n`); lastAuthor = e.author; }
 					stream.markdown(`${e.text}\n\n`);
+				} else if (e.type === 'memory-used') {
+					stream.progress(`Recall: applying ${e.count} lesson${e.count === 1 ? '' : 's'} from past sessions`);
 				} else if (e.type === 'error') {
 					stream.markdown(`\n\n$(error) ${e.message}`);
 				}

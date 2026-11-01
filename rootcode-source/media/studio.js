@@ -230,6 +230,12 @@
         lastAuthor = '';
         return;
       }
+      if (m.kind === 'memory') {
+        flush();
+        out.push(`<details class="recall"><summary>${icon('history')}<strong>Rootcode Recall</strong><span>applied ${m.count} lesson${m.count === 1 ? '' : 's'} from past sessions</span></summary><ul>${m.items.map(x => `<li>${escape(x)}</li>`).join('')}</ul></details>`);
+        lastAuthor = '';
+        return;
+      }
       if (m.kind === 'summary') {
         flush();
         out.push(`<div class="summary">${icon('clock')}<span>Worked for ${duration(m.ms)}</span>${m.tools ? `<span>· ${m.tools} tool call${m.tools === 1 ? '' : 's'}</span>` : ''}${m.agents.length > 1 ? `<span>· ${m.agents.length} agents</span>` : ''}</div>`);
@@ -378,6 +384,8 @@
       closeLive(s, info);
       info.agents.add(data.from); if (data.to) { info.agents.add(data.to); }
       s.messages.push({ role: 'assistant', kind: 'handoff', from: data.from, to: data.to });
+    } else if (t === 'agent-memory-used') {
+      s.messages.push({ role: 'assistant', kind: 'memory', count: Number(data.count) || 0, items: Array.isArray(data.items) ? data.items.map(String) : [] });
     } else if (t === 'agent-approval') {
       closeLive(s, info);
       s.messages.push({ role: 'assistant', kind: 'approval', author: 'version_control_agent', description: data.description, status: 'pending' });

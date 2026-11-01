@@ -159,3 +159,13 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .working .muted { margin-left: 4px; font-variant-numeric: tabular-nums; }
 .summary { display: flex; align-items: center; gap: 6px; margin: 6px 0 14px 29px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 11px; color: var(--muted); }
 .summary .codicon { font-size: 12px; }
+
+/* Rootcode Recall (cross-session memory) */
+:root { --recall: #14b8a6; }
+.recall { margin: 8px 0 4px 29px; border: 1px solid var(--recall); border-left-width: 3px; border-radius: 8px; font-size: 12px; background: color-mix(in srgb, var(--recall) 8%, transparent); }
+.recall > summary { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; list-style: none; }
+.recall > summary::-webkit-details-marker { display: none; }
+.recall > summary .codicon { color: var(--recall); font-size: 14px; }
+.recall > summary strong { color: var(--recall); }
+.recall > summary span { color: var(--muted); }
+.recall ul { margin: 0; padding: 4px 12px 10px 28px; color: var(--muted); }
