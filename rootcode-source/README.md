@@ -1,49 +1,31 @@
 # Rootcode
 
-A VS Code extension interface for codebase fine-tuning and task-driven agent workflows.
+A VS Code extension that builds a living dependency graph of your codebase, gives coding agents a structured, deterministic context from it, fine-tunes a LoRA on your repository's history, and learns from how you use the agents' output.
 
-## Features
+**Full documentation: `README.md` at the repository root. Setup, environment variables and run instructions: `SETUP.md` at the repository root.**
 
-- **Activity Bar Integration**: Rootcode now appears as a separate section in VS Code's activity bar (like GitLens, Copilot, etc.)
-- **Sidebar Panel**: Access your Rootcode workflows directly from the VS Code sidebar
-- **Command Palette**: Launch Rootcode Studio with the **Rootcode: Open Studio** command
+## What you get
 
-## Run
+- **Agents** (Google ADK): orchestrator → developer → QA (Docker sandbox) → version control (push needs your approval), plus a GitHub PR review agent. Live view of thinking, tool calls and hand-offs.
+- **Atlas — structured deterministic context:** a local index of symbols, imports, calls, inheritance and DI; entry points from your editor, errors, stack traces, git and symbols; graph traversal and a learned scorer; injected into every agent turn, with symbol-level context, graph tools (`find_symbol`, `get_dependencies`, `trace_symbol`, `get_context`) and post-edit error checks.
+- **Dependency graph panel:** interactive file graph with blast radius and per-symbol callers/callees; lights up the files agents touch while they work.
+- **Cluster workers:** multi-area changes are split across graph clusters, each worker confined to its cluster and run in dependency order.
+- **Rootcode Recall + RL strategy policy:** cross-session failure memory and a UCB bandit that picks the agent's working strategy; 👍/👎 and implicit signals (edits, diagnostics, tests, git reverts) train it.
+- **Fine-tuning:** mine your git history with repo2lora, train a LoRA on Baseten or Fireworks, deploy it, and point the agents at it.
 
-1. Run `npm install`.
-2. Open this folder in VS Code and press **F5** using the **Run Extension** configuration.
-3. Look for the Rootcode icon in the VS Code activity bar (left sidebar), or run **Rootcode: Open Studio** from the Command Palette.
+## Quick start
 
-## Workflows
+```bash
+# from the repository root
+cd muse-lora-trainer && npm install && cd ..
+cd rootcode-source && npm install && npm run compile
+cp .env.example /path/to/your/project/.env     # set BASETEN_API_KEY at minimum
+```
 
-- **Fine-tuning** opens a progress view. Select **Start preparation** to simulate collecting, cleansing, transforming, dataset preparation, and sending to the fine-tuning pipeline. Pipeline handoff is the final stage.
-- **Start with a task** opens a chat. Sending a task simulates understanding, planning, and agent handoff. Enter sends; Shift+Enter adds a line. Runs can be cancelled and conversations reset.
+Open `rootcode-source/` in VS Code, press **F5**, open your project folder in the new window, and click the Rootcode icon. Details: `SETUP.md` at the repository root.
 
-## Current Scope
+## Commands
 
-This is an interface prototype, not a connected AI service. Progress is simulated in the extension host. No repository data is read or uploaded, no model is trained, and no agent executes or modifies files. State survives hiding the panel; closing it starts fresh. Only one workflow runs at a time.
+`npm run compile` (type-check, lint, bundle) · `npm run watch` · `npm run test:workflow` · `npm test` · `npm run package:vsix` (builds `rootcode-<version>.vsix`).
 
-The interface follows the active VS Code theme, uses bundled Codicons, and loads no external scripts, fonts, or services. Task text is escaped before rendering. Incoming messages are validated and pending work is cancelled when the panel closes.
-
-## Development
-
-- `npm run compile`: type-check, lint, and bundle.
-- `npm run watch`: continuous build for F5 development.
-- `npm run test:workflow`: fast workflow tests without launching VS Code.
-- `npm test`: VS Code integration tests. Downloads a test runtime on the first run.
-- `npm run package`: production build, not a VSIX archive.
-- `npm run package:vsix`: production build and installable VSIX archive.
-
-`src/workflow.ts` owns simulated runs and emitted events. Replace its simulated stages with backend integration later, retaining progress, cancellation, and completion events. `src/extension.ts` owns the sidebar panel, webview views, and message validation. `media/studio.js` and `media/studio.css` own the interface.
-
-## Install in Your Existing VS Code
-
-1. Build the installer with `npm run package:vsix`.
-2. In VS Code, open Extensions with **Cmd+Shift+X**.
-3. Use the **...** menu and select **Install from VSIX...**.
-4. Choose `rootcode-0.0.2.vsix` from this project.
-5. Click the Rootcode icon in the activity bar to open the sidebar panel.
-
-Requires VS Code 1.85.0 or newer. Packaging does not download another VS Code application.
-
-Integration testing with `npm test` downloads a separate VS Code runtime into `.vscode-test`. Remove that directory after testing. Use `npm run test:workflow` for tests without downloading an editor.
+Source map: `src/extension.ts` (activation), `src/agents/` (agents, tools, prompts, model client), `src/atlas/` (index, graph, clusters, scorer, graph panel), `src/memory/` (Recall + RL policy), `src/providers/` (fine-tuning panel), `media/` (webview UIs).

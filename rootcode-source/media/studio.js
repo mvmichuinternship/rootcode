@@ -146,7 +146,7 @@
     const status = !config.hasKey
       ? `<span class="pill warn" title="${escape(config.error || 'Model configuration is incomplete')}">${icon('warning')} Model not configured</span>`
       : `<span class="pill" title="${escape(`${config.provider}: ${config.model}`)}">${icon('circle-filled')} ${escape(config.provider ? `${config.provider} · ` : '')}${escape(config.model)}</span>`;
-    return `<header class="topbar">${left}<div class="topbar-right">${config.workspace ? `<span class="pill ghost">${icon('folder')} ${escape(config.workspace)}</span>` : ''}${status}</div></header>`;
+    return `<header class="topbar">${left}<div class="topbar-right"><button class="pill graph-btn" data-action="atlas" title="Open the dependency graph">${icon('type-hierarchy')} Graph</button>${config.workspace ? `<span class="pill ghost">${icon('folder')} ${escape(config.workspace)}</span>` : ''}${status}</div></header>`;
   }
 
   function composer(placeholder, busy) {
@@ -215,6 +215,32 @@
     return `<div class="agent-head tone-${a.tone}"><span class="avatar">${icon(a.icon)}</span><strong>${escape(a.name)}</strong>${a.role ? `<span class="muted">${escape(a.role)}</span>` : ''}</div>`;
   }
 
+  const signedNum = v => `${v >= 0 ? '+' : ''}${Number(v).toFixed(2)}`;
+
+  function rlCard(m) {
+    const u = m.update;
+    const arms = (u ? u.arms : m.arms) || [];
+    const rows = arms.map(a => {
+      const pct = Math.round((Math.max(-1, Math.min(1, a.q)) + 1) * 50);
+      const chosen = a.id === m.armId;
+      return `<div class="rl-arm${chosen ? ' chosen' : ''}"><span class="rl-name">${chosen ? icon('arrow-right') : ''}${escape(a.label)}</span><span class="rl-bar"><i style="width:${pct}%"></i></span><span class="rl-q">Q ${signedNum(a.q)}</span><span class="rl-n">n=${a.n}</span></div>`;
+    }).join('');
+    const why = m.mode === 'explore'
+      ? (m.totalPulls === 0 ? 'No experience yet for this task type, so the policy is exploring.' : 'Trying a less-proven strategy to keep learning.')
+      : 'Best-known strategy so far for this task type.';
+    let foot;
+    if (u && u.failed) {
+      foot = `<div class="rl-foot">${icon('warning')}<span>Couldn't record feedback — this decision is from an earlier session.</span></div>`;
+    } else if (u) {
+      foot = `<div class="rl-foot done">${icon('pulse')}<span>Reward <b class="${u.reward >= 0 ? 'pos' : 'neg'}">${signedNum(u.reward)}</b> (${u.source === 'you' ? 'your feedback' : 'from your edits, tests &amp; git'}) → <b>${escape(u.label)}</b> value ${signedNum(u.qBefore)} → <b>${signedNum(u.qAfter)}</b></span></div>`;
+    } else if (m.feedback) {
+      foot = `<div class="rl-foot">${icon('loading')}<span>Updating policy…</span></div>`;
+    } else {
+      foot = `<div class="rl-foot"><span>Was this approach helpful?</span><button class="rl-btn" data-action="rl" data-id="${escape(m.turnId)}" data-text="1" title="Reward this strategy">${icon('thumbsup')}</button><button class="rl-btn" data-action="rl" data-id="${escape(m.turnId)}" data-text="-1" title="Penalize this strategy">${icon('thumbsdown')}</button><span class="muted">or just keep working: edits, tests and git reverts also train it.</span></div>`;
+    }
+    return `<details class="rl" open><summary>${icon('graph')}<strong>Rootcode RL</strong><span>policy chose <b>${escape(m.label)}</b></span><em class="rl-mode ${m.mode}">${m.mode}</em><span class="rl-ctx">${escape(m.context)}</span></summary><div class="rl-body"><div class="rl-why">${why}</div>${rows}${foot}</div></details>`;
+  }
+
   function messagesHtml(s) {
     const out = [];
     let steps = [];
@@ -230,12 +256,19 @@
         lastAuthor = '';
         return;
       }
+      if (m.kind === 'context') {
+        flush();
+        out.push(`<details class="atlas-ctx"><summary>${icon('type-hierarchy')}<strong>Rootcode Atlas</strong><span>${m.count} relevant file${m.count === 1 ? '' : 's'} from the dependency graph</span><button class="atlas-show" data-action="atlas" data-text="${escape(m.files.join('|'))}">Show in graph</button></summary><ul>${m.files.map(x => `<li>${escape(x)}</li>`).join('')}</ul></details>`);
+        lastAuthor = '';
+        return;
+      }
       if (m.kind === 'memory') {
         flush();
         out.push(`<details class="recall"><summary>${icon('history')}<strong>Rootcode Recall</strong><span>applied ${m.count} lesson${m.count === 1 ? '' : 's'} from past sessions</span></summary><ul>${m.items.map(x => `<li>${escape(x)}</li>`).join('')}</ul></details>`);
         lastAuthor = '';
         return;
       }
+      if (m.kind === 'rl') { flush(); out.push(rlCard(m)); lastAuthor = ''; return; }
       if (m.kind === 'summary') {
         flush();
         out.push(`<div class="summary">${icon('clock')}<span>Worked for ${duration(m.ms)}</span>${m.tools ? `<span>· ${m.tools} tool call${m.tools === 1 ? '' : 's'}</span>` : ''}${m.agents.length > 1 ? `<span>· ${m.agents.length} agents</span>` : ''}</div>`);
@@ -308,6 +341,15 @@
     if (name === 'home') { state.view = 'home'; state.draft = ''; render(); }
     else if (name === 'stop') { vscode.postMessage({ type: 'cancel', sessionId: state.current }); }
     else if (name === 'suggest') { state.draft = text || ''; render(); }
+    else if (name === 'rl' && id && (text === '1' || text === '-1')) {
+      for (const s of state.sessions) {
+        const m = s.messages.find(x => x.kind === 'rl' && x.turnId === id);
+        if (m && !m.feedback && !m.update) { m.feedback = Number(text); vscode.postMessage({ type: 'rl-feedback', turnId: id, value: Number(text) }); render();
+          // Never hang on "Updating policy…": if the host doesn't answer, say so.
+          setTimeout(() => { if (!m.update) { m.update = { failed: true }; scheduleRender(); } }, 5000); }
+      }
+    }
+    else if (name === 'atlas') { vscode.postMessage({ type: 'atlas-open', paths: text ? text.split('|') : [] }); }
     else if (name === 'trainer') { vscode.postMessage({ type: 'open-trainer' }); }
     else if (name === 'delete' && id) {
       if (running.has(id)) { vscode.postMessage({ type: 'cancel', sessionId: id }); running.delete(id); }
@@ -386,6 +428,10 @@
       s.messages.push({ role: 'assistant', kind: 'handoff', from: data.from, to: data.to });
     } else if (t === 'agent-memory-used') {
       s.messages.push({ role: 'assistant', kind: 'memory', count: Number(data.count) || 0, items: Array.isArray(data.items) ? data.items.map(String) : [] });
+    } else if (t === 'agent-context-used') {
+      s.messages.push({ role: 'assistant', kind: 'context', count: Number(data.count) || 0, files: Array.isArray(data.files) ? data.files.map(String) : [] });
+    } else if (t === 'agent-rl-decision') {
+      s.messages.push({ role: 'assistant', kind: 'rl', turnId: String(data.turnId), label: String(data.label), armId: String(data.armId), mode: data.mode === 'exploit' ? 'exploit' : 'explore', context: String(data.context), arms: Array.isArray(data.arms) ? data.arms : [], totalPulls: Number(data.totalPulls) || 0 });
     } else if (t === 'agent-approval') {
       closeLive(s, info);
       s.messages.push({ role: 'assistant', kind: 'approval', author: 'version_control_agent', description: data.description, status: 'pending' });
@@ -416,6 +462,14 @@
     if (data.type === 'agent-config') {
       config = { provider: String(data.provider || ''), model: String(data.model || ''), workspace: String(data.workspace || ''), hasKey: !!data.hasKey, error: String(data.error || '') };
       render(); return;
+    }
+    if (data.type === 'rl-update') {
+      for (const s of state.sessions) {
+        const m = s.messages.find(x => x.kind === 'rl' && x.turnId === data.turnId);
+        if (m && data.failed) { m.update = { failed: true }; scheduleRender(); }
+        else if (m) { m.update = { reward: Number(data.reward), source: data.source, label: String(data.label), qBefore: Number(data.qBefore), qAfter: Number(data.qAfter), arms: data.arms || m.arms }; scheduleRender(); }
+      }
+      return;
     }
     if (data.type.startsWith('agent-')) { onAgentEvent(data); }
   });

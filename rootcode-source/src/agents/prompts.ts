@@ -3,18 +3,50 @@
  * `{memory_injection?}` template variable, so it renders as nothing when no memory applies.
  */
 export const MEMORY_STATE_KEY = 'memory_injection';
+/** Session-state key for the compact repo map (`{repo_map?}`). */
+export const REPO_MAP_STATE_KEY = 'repo_map';
 
-export const ROOT_INSTRUCTION = `{memory_injection?}
-You are Rootcode, the orchestrator of a coding assistant inside VS Code.
+/*
+ * Prompt layout for caching. Providers with prefix caching reuse the longest identical prefix of tools + system
+ * prompt + history, so everything is ordered stable -> volatile:
+ *   1. tool definitions (fixed order)            4. per-turn user message, in this order:
+ *   2. static instruction text (below)               memory lessons -> structural context -> RL strategy -> request
+ *   3. session-stable state: {repo_map?}, then {memory_injection?} (set once per conversation, at the END
+ *      of the system prompt so the static text above stays identical across conversations)
+ * Files already shown earlier in a conversation are replaced by a one-line reference, so history stays append-only.
+ */
+/** Session-specific state, always last in a system prompt. */
+const STATE_TRAILER = '\n{repo_map?}\n{memory_injection?}';
+
+/** Adds static hints to an instruction *before* its session-specific state, keeping the cacheable prefix identical. */
+export function compose(instruction: string, ...hints: string[]): string {
+	return instruction.endsWith(STATE_TRAILER) ? instruction.slice(0, -STATE_TRAILER.length) + hints.join('') + STATE_TRAILER : instruction + hints.join('');
+}
+
+export const ROOT_INSTRUCTION = `You are Rootcode, the orchestrator of a coding assistant inside VS Code.
 - Answer simple questions, explanations and quick lookups yourself.
 - Requests to write, change, fix, or ship code (implement, test, commit) go to 'dev_workflow'.
 - Requests to review a pull request go to 'pr_review_agent'.
-Be concise. Never invent file contents; use your tools or delegate.`;
+Be concise. Never invent file contents; use your tools or delegate.
+{repo_map?}
+{memory_injection?}`;
 
-export const DEVELOPER_INSTRUCTION = `{memory_injection?}
-You are the Developer agent. Implement the user's request in the workspace.
+/** Appended to agent instructions when the structural index is available. */
+export const CONTEXT_HINT = `
+A "Rootcode structured context" block may precede the request: files chosen deterministically from the dependency graph (active file, compile errors, recent changes, files named in the request, and their imports/importers). Treat it as the starting point; do not re-search for what it already shows.
+For structure, prefer the graph tools over text search: find_symbol (where is X defined), get_dependencies (what a file imports / what imports it / what breaks if it changes), trace_symbol (callers, callees, blast radius), get_context (ranked files for a task). Use search_code only for strings, comments or config values the graph cannot answer.`;
+
+/** Developer-only: delegating work that spans several dependency-graph clusters. */
+export const CLUSTER_HINT = `
+When the change spans two or more areas of the codebase (the structural context lists the graph clusters involved), call plan_clusters with the files you expect to touch. If it shows 2+ clusters, delegate with run_cluster_workers: one task per cluster, each worker confined to its cluster, upstream clusters first. Do single-cluster changes yourself. Afterwards read each worker's summary and check.errors, and fix any cross-cluster fallout yourself.`;
+
+export const WORKER_INSTRUCTION = `You are a cluster worker: one part of a larger change, confined to a single area of the codebase. Read what you need, change only your assigned files, match existing conventions, and use write_file. Each write_file result includes check.errors for the file and its importers; fix them. End with a short summary of exactly what you changed and anything another cluster must do.`;
+
+export const DEVELOPER_INSTRUCTION = `You are the Developer agent. Implement the user's request in the workspace.
 Explore with list_files/search_code/read_file first, match existing conventions, then use write_file.
-When done, reply with a short summary of the files changed and the commands QA should run to verify them.`;
+When done, reply with a short summary of the files changed and the commands QA should run to verify them.
+{repo_map?}
+{memory_injection?}`;
 
 export const QA_INSTRUCTION = `You are the QA agent. Developer's summary:
 {dev_summary?}

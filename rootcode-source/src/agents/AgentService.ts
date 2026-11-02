@@ -5,8 +5,8 @@ import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import { APP_NAME, type AgentConfig } from './config';
 import { buildAgentSystem, type AgentSystem } from './agents';
-import { MEMORY_STATE_KEY } from './prompts';
-import { isMemoryEnabled, type AgentStep, type AgentTurn, type MemorySystem } from '../memory';
+import { MEMORY_STATE_KEY, REPO_MAP_STATE_KEY } from './prompts';
+import { isMemoryEnabled, RL_ARMS, type AgentStep, type AgentTurn, type MemorySystem, type RlDecision } from '../memory';
 
 /**
  * What the UI renders. `partial` text/thought events are streamed deltas to append; a non-partial
@@ -21,6 +21,8 @@ export type AgentEvent =
 	| { type: 'approval'; description: string }
 	| { type: 'approval-result'; approved: boolean }
 	| { type: 'memory-used'; count: number; items: string[] }
+	| { type: 'context-used'; count: number; files: string[] }
+	| ({ type: 'rl-decision' } & RlDecision)
 	| { type: 'error'; message: string };
 
 /** Asked when a tool (e.g. git push) needs a human decision. */
@@ -55,6 +57,19 @@ function describeResult(response: Record<string, unknown> | undefined): { ok: bo
 	return { ok, preview: clip(preview, PREVIEW_LIMIT) };
 }
 
+const PATH_KEYS = new Set(['path', 'file', 'filePath', 'file_path', 'filename', 'imports', 'importedBy']);
+/** Collects file paths named in a tool's args or result (shallow JSON walk). */
+function pathsIn(value: unknown, out: Set<string> = new Set(), depth = 0): Set<string> {
+	if (depth > 4 || value === null || typeof value !== 'object') { return out; }
+	if (Array.isArray(value)) { for (const v of value.slice(0, 100)) { pathsIn(v, out, depth + 1); } return out; }
+	for (const [k, v] of Object.entries(value)) {
+		if (PATH_KEYS.has(k) && typeof v === 'string') { out.add(v); }
+		else if (PATH_KEYS.has(k) && Array.isArray(v)) { for (const s of v.slice(0, 100)) { if (typeof s === 'string') { out.add(s); } } }
+		else { pathsIn(v, out, depth + 1); }
+	}
+	return out;
+}
+
 const FILE_ARG_KEYS = ['path', 'file', 'filePath', 'file_path', 'filename'];
 
 function classifyQuery(text: string): AgentTurn['queryType'] {
@@ -84,6 +99,8 @@ export class AgentService {
 			if (!turn) { return; }
 			const { store, rewardComputer } = memory;
 			const reward = rewardComputer.compute(signals, turn);
+			memory.policy.reward(turn.id, reward.finalReward, 'implicit');
+			this.cfg.context?.applyReward(turn.id, reward.finalReward);
 			void store.save({
 				turn, reward,
 				failureReason: rewardComputer.extractFailureReason(signals, turn),
@@ -108,11 +125,19 @@ export class AgentService {
 			const ids = { appName: APP_NAME, userId: this.userId, sessionId };
 			const activeFile = vscode.window.activeTextEditor?.document.uri.fsPath ?? '';
 			const queryType = classifyQuery(text);
+			let newSession = false;
 			if (!(await this.runner.sessionService.getSession(ids))) {
+				newSession = true;
 				// Past lessons are injected once, when a conversation starts, via session state.
 				let injection = '';
 				try { injection = this.memory && isMemoryEnabled() ? this.memory.injector.getInjection(text, activeFile, queryType) : ''; } catch { /* memory is optional */ }
-				await this.runner.sessionService.createSession(injection ? { ...ids, state: { [MEMORY_STATE_KEY]: injection } } : ids);
+				// Session-stable state lands at the end of the system prompt (see prompts.ts), after the static text.
+				let repoMap = '';
+				try { repoMap = (await this.cfg.context?.repoMap()) ?? ''; } catch { /* optional */ }
+				const state: Record<string, string> = {};
+				if (injection) { state[MEMORY_STATE_KEY] = injection; }
+				if (repoMap) { state[REPO_MAP_STATE_KEY] = repoMap; }
+				await this.runner.sessionService.createSession(Object.keys(state).length ? { ...ids, state } : ids);
 				const items = injection.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2, 200));
 				if (items.length) { yield { type: 'memory-used', count: items.length, items: items.slice(0, 6) }; }
 			}
@@ -120,9 +145,44 @@ export class AgentService {
 				id: randomUUID(), timestamp: Date.now(), sessionId, query: text, queryType,
 				steps: [], finalResponse: '', filesReferenced: [], entryPointFile: activeFile,
 			};
+			// The RL policy picks a strategy for this turn; the UI shows the choice and the model is told to follow it.
+			let promptText = text;
+			let arm: { id: string; context?: { hops?: number; topK?: number; tokenBudgetScale?: number } } | undefined;
+			if (this.memory && isMemoryEnabled()) {
+				// Compile errors in the active file change what works, so they get their own bandit context.
+				const rlContext = this.cfg.context?.hasActiveErrors() ? `${queryType}+errors` : queryType;
+				const decision = this.memory.policy.select(turn.id, rlContext);
+				arm = RL_ARMS.find(a => a.id === decision.armId);
+				promptText = `[Rootcode RL policy — strategy "${decision.label}": ${decision.hint}]\n\n${text}`;
+				yield { type: 'rl-decision', ...decision };
+			}
+			// Deterministic structural context: entry points -> import-graph traversal -> scored, budgeted files.
+			if (this.cfg.context) {
+				try {
+					const ctx = await this.cfg.context.buildForQuery(text, turn.id, {
+						queryType, arm: arm?.id, hops: arm?.context?.hops, topK: arm?.context?.topK, budgetScale: arm?.context?.tokenBudgetScale,
+					}, sessionId);
+					if (ctx.text) {
+						promptText = `${ctx.text}\n\n${promptText}`;
+						yield { type: 'context-used', count: ctx.files.length, files: ctx.files.slice(0, 12) };
+						this.cfg.onActivity?.(ctx.files, 'context', true);
+					}
+					// Follow-up turns get lessons re-ranked by the dependency neighbourhood of *this* request.
+					if (!newSession && this.memory && isMemoryEnabled()) {
+						const hood = new Set(ctx.files.map(f => path.join(this.cfg.workspaceRoot, f)));
+						const lessons = this.memory.injector.getInjection(text, activeFile, queryType, hood);
+						if (lessons) {
+							promptText = `${lessons}\n\n${promptText}`;
+							const items = lessons.split('\n').filter(line => line.startsWith('- ')).map(line => line.slice(2, 200));
+							if (items.length) { yield { type: 'memory-used', count: items.length, items: items.slice(0, 6) }; }
+						}
+					}
+				} catch { /* context is optional */ }
+			}
+			const edited = new Set<string>();
 			const inFlight = new Map<string, { args: Record<string, unknown>; startedAt: number }>();
 			const streaming = this.cfg.streaming?.() ?? true;
-			let message: Content = { role: 'user', parts: [{ text }] };
+			let message: Content = { role: 'user', parts: [{ text: promptText }] };
 			// A confirmation request pauses the run; resume it with the human's answer.
 			for (;;) {
 				let pending: { id: string; hint: string } | undefined;
@@ -150,6 +210,8 @@ export class AgentService {
 						} else {
 							this.toolNames.set(id, call.name ?? 'unknown');
 							inFlight.set(id, { args: call.args ?? {}, startedAt: Date.now() });
+							this.notifyActivity([...pathsIn(call.args)], call.name ?? 'tool');
+							if (call.name === 'write_file' && typeof call.args?.path === 'string') { edited.add(call.args.path); }
 							yield { type: 'tool-call', author, id, name: call.name ?? 'unknown', args: boundedArgs(call.args ?? {}) };
 						}
 					}
@@ -158,13 +220,14 @@ export class AgentService {
 						const name = res.name ?? this.toolNames.get(id) ?? 'unknown';
 						this.toolNames.delete(id);
 						if (name === 'transfer_to_agent' || name === REQUEST_CONFIRMATION_FUNCTION_CALL_NAME) { continue; }
+						this.notifyActivity([...pathsIn(res.response)], name);
 						const described = describeResult(res.response as Record<string, unknown> | undefined);
 						this.recordStep(turn, inFlight.get(id), name, described.preview);
 						inFlight.delete(id);
 						yield { type: 'tool-result', author, id, name, ...described };
 					}
 				}
-				if (!pending) { this.trackTurn(turn); return; }
+				if (!pending) { this.cfg.context?.recordUsage(turn.id, turn.filesReferenced, [...edited]); this.trackTurn(turn); return; }
 				yield { type: 'approval', description: pending.hint };
 				const confirmed = await this.approve(pending.hint);
 				yield { type: 'approval-result', approved: confirmed };
@@ -175,6 +238,11 @@ export class AgentService {
 		} finally {
 			this.runs.delete(sessionId);
 		}
+	}
+
+	private notifyActivity(paths: string[], label: string): void {
+		if (!paths.length) { return; }
+		try { this.cfg.onActivity?.(paths, label); } catch { /* visualisation must never break a run */ }
 	}
 
 	private recordStep(turn: AgentTurn, call: { args: Record<string, unknown>; startedAt: number } | undefined, tool: string, preview: string): void {

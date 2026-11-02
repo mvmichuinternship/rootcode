@@ -16,8 +16,8 @@ function oneLine(text: string, limit = ENTRY_LIMIT): string {
 export class MemoryInjector {
 	constructor(private readonly store: TrajectoryStore) { }
 
-	getInjection(query: string, activeFile: string, queryType: string): string {
-		const strong = this.store.getRelevantTo(query, activeFile, queryType, CANDIDATES)
+	getInjection(query: string, activeFile: string, queryType: string, neighborhood?: ReadonlySet<string>): string {
+		const strong = this.store.getRelevantTo(query, activeFile, queryType, CANDIDATES, neighborhood)
 			.filter(m => Math.abs(m.reward.finalReward) > 0.3);
 		const failures = strong.filter(m => m.reward.finalReward < -0.3);
 		const successes = strong.filter(m => m.reward.finalReward > 0.3);

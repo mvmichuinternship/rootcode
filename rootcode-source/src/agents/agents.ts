@@ -1,9 +1,12 @@
-import { LlmAgent, MCPToolset, SequentialAgent } from '@google/adk';
-import { DEFAULT_GITHUB_MCP_TOOLSETS, DEFAULT_GITHUB_MCP_URL, type AgentConfig } from './config';
+import { InMemoryRunner, LlmAgent, MCPToolset, SequentialAgent, type FunctionTool } from '@google/adk';
+import { randomUUID } from 'node:crypto';
+import { APP_NAME, DEFAULT_GITHUB_MCP_TOOLSETS, DEFAULT_GITHUB_MCP_URL, type AgentConfig } from './config';
 import { OpenAICompatLlm } from './OpenAICompatLlm';
 import { createReadTools, createWriteTools } from './tools/workspace';
 import { createSandboxTools } from './tools/sandbox';
 import { createGitTools } from './tools/git';
+import { createClusterTools } from './tools/clusters';
+import { createContextTools } from './tools/context';
 import * as P from './prompts';
 
 export interface AgentSystem {
@@ -14,12 +17,34 @@ export interface AgentSystem {
 export function buildAgentSystem(cfg: AgentConfig): AgentSystem {
 	const model = new OpenAICompatLlm('main', cfg.mainModel);
 	const prModel = new OpenAICompatLlm('pr-review', cfg.prReviewModel);
-	const read = createReadTools(cfg.workspaceRoot);
-	const write = createWriteTools(cfg.workspaceRoot);
+	const read = [...createReadTools(cfg.workspaceRoot), ...(cfg.context ? createContextTools(cfg.context) : [])];
+	const write = createWriteTools(cfg.workspaceRoot, cfg.context ? p => cfg.context!.checkAfterWrite(p) : undefined);
+	const hint = cfg.context ? P.CONTEXT_HINT : '';
+
+	// Cluster workers: one extra agent per graph cluster, confined to that cluster's files (see tools/clusters.ts).
+	const runWorker = async (name: string, instruction: string, tools: FunctionTool[]): Promise<string> => {
+		const worker = new LlmAgent({ name, model, description: 'Cluster worker', instruction: P.WORKER_INSTRUCTION, tools });
+		const runner = new InMemoryRunner({ agent: worker, appName: APP_NAME });
+		const ids = { appName: APP_NAME, userId: 'cluster-worker', sessionId: randomUUID() };
+		await runner.sessionService.createSession(ids);
+		const abort = new AbortController();
+		const timer = setTimeout(() => abort.abort(), 5 * 60_000);
+		let last = '';
+		try {
+			for await (const e of runner.runAsync({ userId: ids.userId, sessionId: ids.sessionId, newMessage: { role: 'user', parts: [{ text: instruction }] }, abortSignal: abort.signal })) {
+				if (e.errorMessage) { throw new Error(e.errorMessage); }
+				if (e.partial) { continue; }
+				for (const part of e.content?.parts ?? []) { if (part.text && !part.thought && !part.functionCall && !part.functionResponse) { last = part.text; } }
+			}
+		} finally { clearTimeout(timer); }
+		return last;
+	};
+	const clusterTools = cfg.context ? createClusterTools(cfg.context, cfg.workspaceRoot, read, runWorker, cfg.onActivity) : [];
+	const clusterHint = cfg.context ? P.CLUSTER_HINT : '';
 
 	const developer = new LlmAgent({
 		name: 'developer_agent', model, description: 'Implements code changes in the workspace.',
-		instruction: P.DEVELOPER_INSTRUCTION, tools: [...read, ...write], outputKey: 'dev_summary',
+		instruction: P.compose(P.DEVELOPER_INSTRUCTION, hint, clusterHint), tools: [...read, ...write, ...clusterTools], outputKey: 'dev_summary',
 	});
 	const qa = new LlmAgent({
 		name: 'qa_agent', model, description: 'Tests changes inside a Docker sandbox.',
@@ -53,7 +78,7 @@ export function buildAgentSystem(cfg: AgentConfig): AgentSystem {
 
 	const root = new LlmAgent({
 		name: 'rootcode_agent', model, description: 'Orchestrator that handles basic requests and routes the rest.',
-		instruction: P.ROOT_INSTRUCTION, tools: read, subAgents: [devWorkflow, prReview],
+		instruction: P.compose(P.ROOT_INSTRUCTION, hint), tools: read, subAgents: [devWorkflow, prReview],
 	});
 	return { root, close: async () => { await github?.close(); } };
 }

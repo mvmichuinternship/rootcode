@@ -1,3 +1,4 @@
+import type { IndexOrchestrator } from '../atlas/IndexOrchestrator';
 import type { OpenAICompatOptions } from './OpenAICompatLlm';
 
 export interface AgentConfig {
@@ -8,6 +9,10 @@ export interface AgentConfig {
 	streaming?: () => boolean;
 	workspaceRoot: string;
 	sandboxImage: string;
+	/** Structured workspace context (dependency graph, git timeline, diagnostics); optional. */
+	context?: IndexOrchestrator;
+	/** Files the agent is looking at right now (from tool calls/results), for live graph highlighting. */
+	onActivity?: (paths: string[], label: string, reset?: boolean) => void;
 	github?: { token: string; mcpUrl: string; toolsets: string };
 }
 

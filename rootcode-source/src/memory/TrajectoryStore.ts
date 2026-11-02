@@ -9,7 +9,7 @@ const MIN_SCORE = 1.0;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** djb2 string hash, hex encoded. */
-function hashString(text: string): string {
+export function hashString(text: string): string {
 	let h = 5381;
 	for (let i = 0; i < text.length; i++) { h = ((h << 5) + h + text.charCodeAt(i)) >>> 0; }
 	return h.toString(16);
@@ -84,7 +84,8 @@ export class TrajectoryStore implements vscode.Disposable {
 
 	getAll(): TrajectoryMemory[] { return [...this.bank.memories]; }
 
-	getRelevantTo(_query: string, activeFile: string, queryType: string, limit: number): TrajectoryMemory[] {
+	/** `neighborhood` (absolute paths): files the dependency graph says are relevant to this request. */
+	getRelevantTo(_query: string, activeFile: string, queryType: string, limit: number, neighborhood?: ReadonlySet<string>): TrajectoryMemory[] {
 		const now = Date.now();
 		const activeDir = activeFile ? path.dirname(activeFile) : '';
 		return this.bank.memories
@@ -94,6 +95,10 @@ export class TrajectoryStore implements vscode.Disposable {
 				if (activeFile && turn.entryPointFile === activeFile) { score += 3; }
 				if (turn.queryType === queryType) { score += 2; }
 				if (activeDir && turn.filesReferenced.some(f => path.dirname(f) === activeDir)) { score += 1; }
+				if (neighborhood?.size) {
+					if (neighborhood.has(turn.entryPointFile)) { score += 2; }
+					if (turn.filesReferenced.some(f => neighborhood.has(f))) { score += 1.5; }
+				}
 				if (reward.finalReward < -0.3) { score += 1; }
 				if (now - turn.timestamp < WEEK_MS) { score += 0.5; }
 				return { memory, score };

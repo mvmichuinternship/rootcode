@@ -3,7 +3,7 @@
   "publisher": "rootcode",
   "displayName": "Rootcode",
   "description": "Rootcode builds a living dependency graph of your codebase, trains a personalized agent on your internal patterns, conventions, and engineering history, and delivers code suggestions that don’t just work — they fit. No more generically correct code that violates your architecture. The longer your team uses it, the smarter it gets.",
-  "version": "0.0.8",
+  "version": "0.0.12",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -48,6 +48,19 @@
         "icon": "$(circuit-board)"
       },
       {
+        "command": "rootcode.atlas.open",
+        "title": "Rootcode: Open Dependency Graph",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "rootcode.atlas.showFile",
+        "title": "Rootcode: Show File in Dependency Graph"
+      },
+      {
+        "command": "rootcode.atlas.stats",
+        "title": "Rootcode: Show Context Hit Rate"
+      },
+      {
         "command": "rootcode.agent.openChat",
         "title": "Rootcode: Open Agent Chat"
       },
@@ -86,10 +99,48 @@
         },
         {
           "command": "loraTrainer.checkStatus"
+        },
+        {
+          "command": "rootcode.atlas.open"
+        },
+        {
+          "command": "rootcode.atlas.showFile"
+        },
+        {
+          "command": "rootcode.atlas.stats"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "rootcode.atlas.showFile",
+          "group": "navigation@99",
+          "when": "resourceScheme == file && !explorerResourceIsFolder"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "rootcode.atlas.open",
+          "group": "navigation"
         }
       ]
     },
     "configuration": [
+      {
+        "title": "Rootcode Atlas",
+        "properties": {
+          "rootcode.atlas.autoOpen": {
+            "type": "boolean",
+            "default": true,
+            "description": "Open the dependency graph beside the editor while agents explore the codebase, highlighting the files they touch."
+          },
+          "rootcode.atlas.tokenBudget": {
+            "type": "number",
+            "default": 16000,
+            "minimum": 2000,
+            "description": "Approximate token budget for the structural context injected into each agent turn. Raise it for large-context models; RL strategies scale it up or down."
+          }
+        }
+      },
       {
         "title": "Rootcode Agent",
         "properties": {
@@ -197,7 +248,7 @@
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && npm run lint && node esbuild.js --production",
-    "package:vsix": "npm exec --yes --package @vscode/vsce -- vsce package --allow-missing-repository --skip-license",
+    "package:vsix": "npm exec --yes --package @vscode/vsce -- vsce package --allow-missing-repository --skip-license --no-dependencies",
     "compile-tests": "tsc -p tsconfig.test.json",
     "watch-tests": "tsc -p tsconfig.test.json -w",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
@@ -227,6 +278,7 @@
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@vscode/codicons": "^0.0.46-24",
     "muse-lora-trainer": "file:../muse-lora-trainer",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "typescript": "^6.0.3"
   }
 }

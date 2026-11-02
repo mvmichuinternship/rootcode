@@ -38,3 +38,6 @@
 - Decide the fine-tuning provider and authenticated submission contract. Do not silently upload repository data.
 - Choose an agent orchestration service, streaming protocol, approval model, and cancellation/error handling.
 - Add real service adapters behind the workflow event boundary; replace demo copy only when execution is real.
+## Update — scope has grown beyond the original prototype
+
+The "simulated, no real agents" notes above describe the first scaffold only. The extension now has real Google ADK agents (orchestrator, developer, QA in a Docker sandbox, version control with approval-gated push, GitHub PR review), a real fine-tuning flow (repo2lora + Baseten/Fireworks), cross-session failure memory (Rootcode Recall) with a UCB RL strategy policy, and Atlas (`src/atlas/`): structured deterministic context from a dependency graph, a graph UI panel, symbol-level context, post-edit diagnostics checks, cluster workers, and a cache-friendly prompt layout. See `../README.md` for the complete description and `../SETUP.md` for setup. Package builds are kept as version 0.0.12 (overwritten), not bumped.

@@ -66,7 +66,8 @@ export function createReadTools(root: string): FunctionTool[] {
 	];
 }
 
-export function createWriteTools(root: string): FunctionTool[] {
+/** `afterWrite` (optional) reports diagnostics for the written file and its importers back to the model. */
+export function createWriteTools(root: string, afterWrite?: (relPath: string) => Promise<object | undefined>, canWrite?: (relPath: string) => string | undefined): FunctionTool[] {
 	return [
 		new FunctionTool({
 			name: 'write_file',
@@ -75,9 +76,13 @@ export function createWriteTools(root: string): FunctionTool[] {
 			execute: async ({ path: p, content }) => {
 				const target = resolveInside(root, p);
 				if (isSecretFile(target)) { throw new Error('Writing secret files (.env, keys) is not allowed.'); }
+				const denied = canWrite?.(p);
+				if (denied) { throw new Error(denied); }
 				await fs.mkdir(path.dirname(target), { recursive: true });
 				await fs.writeFile(target, content, 'utf8');
-				return { written: p, bytes: Buffer.byteLength(content) };
+				let check: object | undefined;
+				try { check = await afterWrite?.(p); } catch { /* checking is best-effort */ }
+				return { written: p, bytes: Buffer.byteLength(content), ...(check ? { check, note: 'check.errors lists compiler errors in this file and the files importing it; fix them before finishing.' } : {}) };
 			},
 		}),
 	];
